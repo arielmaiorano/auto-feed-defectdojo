@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import BackgroundTasks
 from fastapi import FastAPI
 from fastapi import status
+from fastapi import HTTPException
 from pydantic import BaseSettings
 
 import uuid
@@ -19,6 +20,9 @@ class Settings(BaseSettings):
     defect_dojo_url: str = ""
     defect_dojo_token: str = ""
     defect_dojo_engagement_id: int = 0
+    gvm_hostname: str = ""
+    gvm_username: str = ""
+    gvm_password: str = ""
 
 ###############################################################################
 
@@ -44,8 +48,8 @@ class ScanTask:
                 "dd_name": "Nmap Scan",
                 "dd_filename": "/tmp/afdd_nmap_" + self.id + ".xml",
                 "execute": ["/usr/bin/nmap", "-Pn", "-F", "-oX", "/tmp/afdd_nmap_" + self.id + ".xml", self.host], 
-                "started": "", 
-                "ended": "", 
+                "started": "",
+                "ended": "",
                 "output": "",
                 "imported": "",
                 "error": ""
@@ -53,9 +57,59 @@ class ScanTask:
             {
                 "dd_name": "Nikto Scan",
                 "dd_filename": "/tmp/afdd_nikto_" + self.id + ".xml",
-                "execute": ["/usr/bin/nikto", "-Format", "xml", "-output", "/tmp/afdd_nikto_" + self.id + ".xml", "-host", self.url, "-maxtime", "10"], 
-                "started": "", 
-                "ended": "", 
+                "execute": ["/usr/bin/nikto", "-Format", "xml", "-output", "/tmp/afdd_nikto_" + self.id + ".xml", "-host", self.url, "-maxtime", "60"], 
+                "started": "",
+                "ended": "",
+                "output": "",
+                "imported": "",
+                "error": ""
+            },
+            {
+                "dd_name": "Wapiti Scan",
+                "dd_filename": "/tmp/afdd_wapiti_" + self.id + ".xml",
+                "execute": ["/usr/bin/wapiti", "--level", "1", "--scope", "url", "--format", "xml", "--output", "/tmp/afdd_wapiti_" + self.id + ".xml", "--url", self.url], 
+                "started": "",
+                "ended": "",
+                "output": "",
+                "imported": "",
+                "error": ""
+            },
+            {
+                "dd_name": "SSLyze 3 Scan (JSON)",
+                "dd_filename": "/tmp/afdd_sslyze_" + self.id + ".xml",
+                "execute": ["/usr/bin/sslyze", "--json_out=/tmp/afdd_sslyze_" + self.id + ".xml", self.host], 
+                "started": "",
+                "ended": "",
+                "output": "",
+                "imported": "",
+                "error": ""
+            },
+            {
+                "dd_name": "DrHeader JSON Importer",
+                "dd_filename": "/tmp/afdd_drheader_" + self.id + ".json",
+                "execute": ["/bin/bash", "-c", "drheader scan single " + self.url + " --json | tee /tmp/afdd_drheader_" + self.id + ".json"], 
+                "started": "",
+                "ended": "",
+                "output": "",
+                "imported": "",
+                "error": ""
+            },
+            {
+                "dd_name": "ZAP Scan",
+                "dd_filename": "/tmp/afdd_zap_" + self.id + ".xml",
+                "execute": ["/usr/share/zaproxy/zap.sh", "-cmd", "-config", "spider.maxDepth=1", "-config", "spider.maxChildren=1", "-newsession", "/tmp/afdd_zap_ses_" + self.id, "-quickurl", self.url, "-quickout", "/tmp/afdd_zap_" + self.id + ".xml"],
+                "started": "",
+                "ended": "",
+                "output": "",
+                "imported": "",
+                "error": ""
+            },
+            {
+                "dd_name": "OpenVAS CSV",
+                "dd_filename": "/tmp/afdd_openvas_" + self.id + ".csv",
+                "execute": ["/usr/bin/sudo", "-u", "nobody", "/usr/local/bin/gvm-script", "--gmp-username", settings.gvm_username, "--gmp-password", settings.gvm_password, "tls", "--hostname", settings.gvm_hostname, "/opt/afdd/openvas_scan.py", self.host, "/tmp/afdd_openvas_" + self.id + ".csv"],
+                "started": "",
+                "ended": "",
                 "output": "",
                 "imported": "",
                 "error": ""
@@ -89,12 +143,15 @@ class ScanTask:
 
 ###############################################################################
 
-@app.post("/scantask", status_code=status.HTTP_201_CREATED)
+@app.post("/scantasks", status_code=status.HTTP_201_CREATED)
 async def post_scantask(url: str, level: int, background_tasks: BackgroundTasks):
-    scanTask = ScanTask(url, level)
-    SCANTASKS.append(scanTask)
-    background_tasks.add_task(scanTask.background_work)
-    return {"message": "ScanTask created.", "id": scanTask.id}
+    try:
+        scanTask = ScanTask(url, level)
+        SCANTASKS.append(scanTask)
+        background_tasks.add_task(scanTask.background_work)
+        return {"message": "ScanTask created.", "id": scanTask.id}
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
 
 @app.get("/scantasks")
 def get_scantasks():
@@ -102,22 +159,15 @@ def get_scantasks():
     for st in SCANTASKS:
         item = {}
         item["id"] = st.id
-        item["created_time"] = st.created_time
         item["status"] = st.status
         tasks.append(item)
     return tasks
 
-@app.get("/scantask/{scantask_id}")
+@app.get("/scantasks/{scantask_id}")
 def get_scantask(scantask_id: str):
     for st in SCANTASKS:
         if st.id == scantask_id:
-            item = {}
-            item["id"] = st.id
-            item["created_time"] = st.created_time
-            item["status"] = st.status
-            item["commands"] = st.commands
-            return item
-    return {"message": "ScanTask not found."}
-
+            return st
+    raise HTTPException(status_code=404, detail="ScanTask not found")
 
 ###############################################################################
